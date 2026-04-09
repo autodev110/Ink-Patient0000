@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"name": "ink",
+			"path": "../../../Desktop/ink"
+		},
+		{
+			"name": "ink_codex_pack",
+			"path": ".."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.ink": "ink"
+		},
+		"ink.engine": "Inky",
+		"ink.mainFile": "story.ink"
+	}
+}
