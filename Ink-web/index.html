@@ -35,6 +35,11 @@
                     <span id="statusAmmo" class="status-value">2 / 5</span>
                 </div>
 
+                <div class="status-card status-card--threat" id="threatCard" hidden>
+                    <span class="status-label">Noise</span>
+                    <span id="statusThreat" class="status-value">Quiet</span>
+                </div>
+
                 <div class="status-card status-card--cards" id="cardsCard" hidden>
                     <span class="status-label">Access</span>
                     <ul id="statusCards" class="card-list" aria-label="Collected access cards"></ul>
@@ -73,6 +78,12 @@
                 <p id="endingSummary" class="ending-summary">
                     This route has concluded. Restart to follow another branch.
                 </p>
+
+                <p id="endingMeta" class="ending-meta"></p>
+                <div class="ending-log" aria-labelledby="endingLogTitle" hidden>
+                    <p id="endingLogTitle" class="ending-log-title">Outcome Archive</p>
+                    <ul id="endingLog"></ul>
+                </div>
 
                 <div class="ending-actions">
                     <button id="endingRestartButton" class="control-button control-button--primary" type="button">

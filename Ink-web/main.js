@@ -1,8 +1,9 @@
 (function (global) {
     "use strict";
 
-    var STATUS_LINE_RE = /^(HEALTH:|AMMO:|ACCESS CARD(?:S)?:)/i;
+    var STATUS_LINE_RE = /^(HEALTH:|AMMO:|NOISE:|ACCESS CARD(?:S)?:)/i;
     var ENDING_LINE_RE = /^ENDING:\s*/i;
+    var ENDING_STORAGE_KEY = "patient-0000:ending-archive:" + global.location.pathname;
     var MOTION_QUERY = global.matchMedia
         ? global.matchMedia("(prefers-reduced-motion: no-preference)")
         : null;
@@ -45,15 +46,20 @@
         dom.endingPanel = document.getElementById("endingPanel");
         dom.endingTitle = document.getElementById("endingTitle");
         dom.endingSummary = document.getElementById("endingSummary");
+        dom.endingMeta = document.getElementById("endingMeta");
+        dom.endingLog = document.getElementById("endingLog");
+        dom.endingLogPanel = document.querySelector(".ending-log");
         dom.endingRestartButton = document.getElementById("endingRestartButton");
         dom.playerCard = document.getElementById("playerCard");
         dom.healthCard = document.getElementById("healthCard");
         dom.ammoCard = document.getElementById("ammoCard");
+        dom.threatCard = document.getElementById("threatCard");
         dom.cardsCard = document.getElementById("cardsCard");
         dom.restartCard = document.getElementById("restartCard");
         dom.statusPlayer = document.getElementById("statusPlayer");
         dom.statusHealth = document.getElementById("statusHealth");
         dom.statusAmmo = document.getElementById("statusAmmo");
+        dom.statusThreat = document.getElementById("statusThreat");
         dom.statusCards = document.getElementById("statusCards");
     }
 
@@ -385,6 +391,7 @@
         var playerId = readVar("player_id", "");
         var health = clampNumber(readVar("health", 0), 0, 3);
         var bullets = clampNumber(readVar("bullets", 0), 0, 5);
+        var attention = clampNumber(readVar("attention", 0), 0, 3);
         var cards = [];
 
         if (readVar("keycard_a", false)) {
@@ -398,9 +405,13 @@
         dom.statusPlayer.textContent = playerId || "Pending";
         dom.statusHealth.textContent = formatRatio(health, 3);
         dom.statusAmmo.textContent = formatRatio(bullets, 5);
+        dom.statusThreat.textContent = formatThreat(attention);
 
         dom.healthCard.classList.toggle("is-alert", health <= 1);
         dom.ammoCard.classList.toggle("is-alert", bullets <= 1);
+        dom.threatCard.classList.toggle("is-alert", attention >= 2);
+        dom.threatCard.classList.toggle("is-critical", attention >= 3);
+        dom.threatCard.hidden = !playerId;
         dom.playerCard.classList.toggle("is-alert", !playerId);
 
         dom.cardsCard.hidden = cards.length === 0;
@@ -458,14 +469,157 @@
         dom.endingPanel.hidden = !packet.isEnding;
 
         if (packet.isEnding) {
+            var endingInfo = rememberEnding(packet.endingTitle || "Run Complete", playerId);
             dom.endingTitle.textContent = packet.endingTitle || "Run Complete";
             dom.endingSummary.textContent = playerId
                 ? "Outcome recorded for Subject " + playerId + ". Restart to explore another route."
                 : "This route has concluded. Restart to begin again.";
+            renderEndingArchive(endingInfo);
         } else {
             dom.endingTitle.textContent = "Run Complete";
             dom.endingSummary.textContent = "This route has concluded. Restart to follow another branch.";
+            dom.endingMeta.textContent = "";
+            dom.endingLog.replaceChildren();
+            dom.endingLogPanel.hidden = true;
         }
+    }
+
+    function rememberEnding(title, playerId) {
+        var category = classifyEnding(title);
+        var records = readEndingArchive();
+        var record = {
+            key: buildEndingKey(playerId || "unknown", title),
+            playerId: playerId || "unknown",
+            title: title,
+            category: category,
+            burnedClean: Boolean(readVar("burned_clean", false)),
+            loggedAt: Date.now()
+        };
+        var replaced = false;
+
+        records = records.map(function (existingRecord) {
+            existingRecord.key = buildEndingKey(existingRecord.playerId, existingRecord.title);
+
+            if (existingRecord.key === record.key) {
+                replaced = true;
+                return record;
+            }
+
+            return existingRecord;
+        });
+
+        if (!replaced) {
+            records.push(record);
+        }
+
+        records.sort(function (a, b) {
+            return b.loggedAt - a.loggedAt;
+        });
+
+        writeEndingArchive(records);
+
+        return {
+            current: record,
+            records: records
+        };
+    }
+
+    function classifyEnding(title) {
+        var normalized = String(title || "").toUpperCase();
+
+        if (
+            /CONSUMED|INSIDE THE WALL|FILED AWAY|FEED|THRESHOLD|GLASS|RETURNED TO ROOT|FIXED|CLAIMED|RECALLED|BURIED|DENIED/.test(normalized)
+        ) {
+            return "Fatality";
+        }
+
+        if (
+            /RECOVERED|FALSE|QUARANTINED|HELD|DEBRIEF|WITNESS REMOVED/.test(normalized)
+        ) {
+            return "Contained";
+        }
+
+        if (/EXTRACTED|LIFTED|TAKEN ALIVE/.test(normalized)) {
+            return "Extracted";
+        }
+
+        if (/ONLY ACCOUNT|WITNESS/.test(normalized)) {
+            return "Witness";
+        }
+
+        if (/RUNOFF|SMALL WAY|ROOTMARK|PINES|RANGE|MISSED|DRAWING|PAPER|MAPS|NUMBER|BRANCH|SEVERED|BLACKOUT/.test(normalized)) {
+            return "Escape";
+        }
+
+        return "Outcome";
+    }
+
+    function renderEndingArchive(endingInfo) {
+        var records = endingInfo.records || [];
+        var current = endingInfo.current || {};
+        var fragment = document.createDocumentFragment();
+
+        dom.endingMeta.textContent = current.category
+            ? formatEndingDescriptors(current) + " // " + records.length + " outcomes logged"
+            : records.length + " outcomes logged";
+
+        records.slice(0, 8).forEach(function (record) {
+            var item = document.createElement("li");
+            var outcome = document.createElement("span");
+            var meta = document.createElement("span");
+
+            outcome.className = "ending-log-outcome";
+            outcome.textContent = record.title;
+            meta.className = "ending-log-meta";
+            meta.textContent = "Subject " + record.playerId + " // " + formatEndingDescriptors(record);
+
+            item.appendChild(outcome);
+            item.appendChild(meta);
+            fragment.appendChild(item);
+        });
+
+        dom.endingLog.replaceChildren(fragment);
+        dom.endingLogPanel.hidden = records.length === 0;
+    }
+
+    function readEndingArchive() {
+        try {
+            var rawRecords = global.localStorage.getItem(ENDING_STORAGE_KEY);
+            var records = rawRecords ? JSON.parse(rawRecords) : [];
+
+            return Array.isArray(records) ? records.filter(isValidEndingRecord) : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function writeEndingArchive(records) {
+        try {
+            global.localStorage.setItem(ENDING_STORAGE_KEY, JSON.stringify(records.slice(0, 40)));
+        } catch (error) {
+            // Local storage can be blocked; the ending itself should still render.
+        }
+    }
+
+    function isValidEndingRecord(record) {
+        return record &&
+            typeof record.title === "string" &&
+            typeof record.playerId === "string" &&
+            typeof record.category === "string";
+    }
+
+    function buildEndingKey(playerId, title) {
+        return [playerId || "unknown", title || "Run Complete"].join("|");
+    }
+
+    function formatEndingDescriptors(record) {
+        var descriptors = [record.category || "Outcome"];
+
+        if (record.burnedClean) {
+            descriptors.push("Root Destroyed");
+        }
+
+        return descriptors.join(" // ");
     }
 
     function renderFatal(message) {
@@ -474,6 +628,10 @@
         dom.choices.replaceChildren();
         dom.choicesPanel.hidden = true;
         dom.endingPanel.hidden = true;
+        dom.threatCard.hidden = true;
+        dom.endingMeta.textContent = "";
+        dom.endingLog.replaceChildren();
+        dom.endingLogPanel.hidden = true;
         dom.cardsCard.hidden = true;
         setSceneBackground(null);
 
@@ -509,6 +667,22 @@
 
     function formatRatio(value, maxValue) {
         return String(value) + " / " + String(maxValue);
+    }
+
+    function formatThreat(value) {
+        if (value >= 3) {
+            return "Swarmed";
+        }
+
+        if (value === 2) {
+            return "Hunted";
+        }
+
+        if (value === 1) {
+            return "Echoing";
+        }
+
+        return "Quiet";
     }
 
     function clampNumber(value, min, max) {
